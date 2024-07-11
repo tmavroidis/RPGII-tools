@@ -1,0 +1,169 @@
+**free
+// Program CRTSQLDDLR from the NTMTOOLS library
+// GNU General Public License v3.0
+//
+// This program takes a flat file from a system 3x system @member definition
+// and creates a DDL source member, creates the table (physical file) with
+// the definitions it finds and copies the data from the flat file to it.
+//
+
+ctl-opt dftactgrp(*no) actgrp(*new) optimize(*none);
+
+dcl-f qs36src usropn usage(*input) extmbr($member) extdesc('NTMTOOLS/QS36SRC')
+                                  rename(qs36src:recin) prefix(in_);
+
+dcl-f qtxtsrc usropn usage(*output) extmbr($MEMBER) extdesc('NTMTOOLS/QTXTSRC')
+                                   rename(qtxtsrc:recout);
+
+dcl-pr ExtPgm;
+   *n   Char(10);
+End-Pr;
+
+dcl-pi crtsqlddlr;
+   $member   Char(10);
+   $tablename Char(50);
+End-Pi;
+
+dcl-pr QCMDEXC extpgm ;
+  *n char(250) options(*varsize) const ;
+  *n packed(15:5) const ;
+end-pr ;
+
+dcl-s Command                   varchar(250) ;
+dcl-s Length                    packed(15:5) ;
+dcl-s wrk40                     char(40);
+dcl-s wrk10                     char(10);
+dcl-s type                      char(15);
+dcl-s fnd                       packed(3:0);
+dcl-s size                      packed(3:0);
+dcl-s size2                     packed(3:0);
+dcl-s default                   char(15);
+dcl-s comma                     char(1);
+dcl-s First_Time                char(1);
+
+dcl-s field_start_position      packed(3:0);
+dcl-s field_end_position        packed(3:0);
+dcl-s save_field_start_position packed(3:0);
+dcl-s save_field_end_position   packed(3:0);
+
+
+dcl-c unwanted const('"!@$¢&*()+=-¬¦{}¬¦;:,.<>?/''');
+dcl-c tospaces const('                             ');
+dcl-c nonprint const(x'000102030405060708090A0B0C0D0E0F-
+                       101112131415161718191A1B1C1D1E1F-
+                       202122232425262728292A2B2C2D2E2F-
+                       303132333435363738393A3B3C3D3E3F-
+                       41');
+dcl-c npspace  const('                                -
+                                                    ' );
+
+dcl-c lowerCase const('abcdefghijklmnopqrstuvwxyz');
+dcl-c upperCase const('ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+
+monitor;
+ Command = 'ADDPFM FILE(NTMTOOLS/QTXTSRC) MBR(' + $member + ')' ;
+ QCMDEXC(Command:%len(%trimr(Command))) ;
+  on-error;
+     Command = 'CLRPFM FILE(NTMTOOLS/QTXTSRC) MBR(' + $member + ')' ;
+     QCMDEXC(Command:%len(%trimr(Command))) ;
+endmon;
+
+open qtxtsrc;
+open qs36src;
+
+create_header();
+
+read recin;
+dow (not %eof(qs36src));
+  if %subst(in_srcdta:47:1) <> ' ';
+    create_row();
+  EndIf;
+  read recin;
+EndDo;
+
+create_trailer();
+
+close qtxtsrc;
+close qs36src;
+
+monitor;
+ Command = 'DLTF file(NTMTOOLS/' + %trim(%ScanRpl('@' : '' : $member)) + 'P)' ;
+ QCMDEXC(Command:%len(%trimr(Command))) ;
+  on-error;
+endmon;
+
+Command = 'RUNSQLSTM SRCFILE(NTMTOOLS/QTXTSRC) SRCMBR(' + %trim($member) + ') COMMIT(*NONE) MARGINS(120)' ;
+QCMDEXC(Command:%len(%trimr(Command))) ;
+
+*inlr = *on;
+
+dcl-proc create_row;
+  wrk40 = '   ' + %ScanRpl(' ' : '_' :%trim(%subst(in_srcdta:75:22))) ;
+  wrk10 = %subst(in_srcdta:53:10);
+  if wrk40 = *blank;
+    wrk40 = '   ' + %trim(wrk10) + '_missing';
+  EndIf;
+  wrk40 = %xlate(uppercase:lowercase:wrk40);
+  wrk40 = '   ' + %ScanRpl('#' : '_number' :wrk40) ;
+  wrk40 = '   ' + %ScanRpl('%' : '_percent' :wrk40) ;
+  wrk40 = %xlate(unwanted:tospaces:wrk40);
+  fnd = 1;
+  dou fnd = %len(wrk40);
+    fnd = %scan(' ' : wrk40:fnd+1);
+  //wrk40 = %replace('' : wrk40:fnd:1);
+    wrk40 = %trim(wrk40);
+  EndDo;
+  field_start_position = %dec(%subst(in_srcdta:45:3):3:0);
+  field_end_position   = %dec(%subst(in_srcdta:49:3):3:0);
+  save_field_start_position = field_start_position;
+  save_field_end_position = field_end_position;
+  size = field_end_position - field_start_position + 1;
+  //size = %dec(%subst(in_srcdta:49:3):3:0) - %dec(%subst(in_srcdta:45:3):3:0) + 1;
+  if %subst(in_srcdta:52:1) <> ' ';
+    default = '0';
+    if %subst(in_srcdta:43:1) = 'P';
+       size = (size * 2) - 1;
+       type = 'DECIMAL(' + %char(size) + ',' + %subst(in_srcdta:52:1);
+    else;
+       type = 'NUMERIC(' + %char(size) + ',' + %subst(in_srcdta:52:1);
+    EndIf;
+  else;
+    type = 'CHAR(' + %char(size) ;
+    default = ''' ''';
+  EndIf;
+  comma = ',';
+  if First_Time = ' ';
+     First_time = 'N';
+     comma = *blanks;
+  EndIf;
+  srcdta = comma + %trim(wrk40) + ' for ' + wrk10 + ' ' + %trim(type) + ') NOT NULL DEFAULT ' + %trim(default);
+  write recout;
+
+End-Proc;
+
+
+dcl-proc create_header;
+  $tablename = %xlate(nonprint:npspace:$tablename);
+  srcdta = 'CREATE TABLE NTMTOOLS.TBL_' + %trim($tablename);
+  write recout;
+  srcdta = '     for system name ' + %trim(%ScanRpl('@' : '' : $member)) + 'P';
+  write recout;
+  srcdta = '     (';
+  write recout;
+//  srcdta = '   ' + %trim(%ScanRpl('@' : '' : $member)) +
+//   '_Id for column ' + %subst(%trim(%ScanRpl('@' : '' : $member)):1:2) + 'ID integer ';
+//  write recout;
+//  srcdta = '    primary key generated always as identity(start with 1 increment by 1) NOT NULL , ';
+//  write recout;
+End-Proc;
+
+dcl-proc create_trailer;
+//  srcdta = '     WsUser                              for USER       VARCHAR(18) DEFAULT USER NOT NULL,';
+//  write recout;
+//  srcdta = '     WsTime                              for TIME       TIMESTAMP DEFAULT CURRENT TIMESTAMP NOT NULL)';
+  srcdta = ')';
+  write recout;
+  srcdta = '       RCDFMT EMPMSTR ;    ';
+  write recout;
+End-Proc;
+ 
