@@ -1,0 +1,8 @@
+             PGM        PARM(&FILEIN &TABLENAME)
+
+             dcl        &filein *char 10 /* name of @member */
+             dcl        &tablename *char 50 /* sql name of table */
+
+             CALL       PGM(CRTSQLDDLR) PARM(&FILEIN &TABLENAME)
+
+             endpgm 
