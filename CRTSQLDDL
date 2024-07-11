@@ -1,0 +1,3 @@
+// This program takes a flat file from a system 3x system @member definition
+// and creates a DDL source member, creates the table (physical file) with
+// the definitions it finds and copies the data from the flat file to it.   
